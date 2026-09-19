@@ -45,7 +45,7 @@ select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414
 <div class="card wide"><div class="label">Live last-digit stream</div><div id="ticks" class="ticks"></div></div>
 </section></main>
 <script>
-const WS='wss://ws.derivws.com/websockets/v3?app_id=1089';
+const WS='wss://ws.binaryws.com/websockets/v3';
 const MAX=500;
 let ws=null,markets=[],selectedSymbol='',buffers={},activeSubs={},pendingHistorySymbol='';
 const $=id=>document.getElementById(id);
@@ -90,9 +90,9 @@ function connect(){
   ws.onopen=()=>{log('Connected to Deriv');ws.send(JSON.stringify({active_symbols:'brief',req_id:1}))}
   ws.onmessage=e=>{
     let m;try{m=JSON.parse(e.data)}catch(_){return}
-    if(m.error){log('Deriv error: '+m.error.message);return}
-    if(m.msg_type==='active_symbols'){
-      markets=m.active_symbols.filter(x=>(x.is_trading===1||(x.is_trading_suspended!==1&&x.underlying_symbol))&&classifyMarket(x)!=='Other');
+    if(m.error){log('Deriv error: '+m.error.message);$('reason').textContent='Deriv API error: '+m.error.message;return}
+    if(m.msg_type==='active_symbols'){log('Markets received: '+(m.active_symbols||[]).length);
+      markets=(m.active_symbols||[]).filter(x=>(x.underlying_symbol||x.symbol)&&classifyMarket(x)!=='Other');
       renderMarkets();
       markets.forEach(x=>subscribe(x.underlying_symbol||x.symbol));
       return;
