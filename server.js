@@ -1,1 +1,10 @@
-const express=require('express');const path=require('path');const app=express();const PORT=process.env.PORT||3000;app.use(express.static(path.join(__dirname,'public')));app.get('/health',(req,res)=>res.json({ok:true,app:'Maven FX Deriv Digit Analysis'}));app.use((req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));app.listen(PORT,'0.0.0.0',()=>console.log('Maven FX running on '+PORT));
+const express=require('express');
+const path=require('path');
+const {startCollector,status:collectorStatus}=require('./collector');
+const app=express();
+const PORT=process.env.PORT||3000;
+app.use(express.static(path.join(__dirname,'public')));
+app.get('/health',(req,res)=>res.json({ok:true,app:'Maven FX Deriv Digit Analysis',collector:collectorStatus()}));
+app.use((req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
+app.listen(PORT,'0.0.0.0',()=>console.log('Maven FX running on '+PORT));
+startCollector().catch(err=>console.error('Background collector failed to start:',err));
