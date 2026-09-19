@@ -94,20 +94,19 @@ function connect(){
     if(m.msg_type==='active_symbols'){
       markets=m.active_symbols.filter(x=>(x.is_trading===1||(x.is_trading_suspended!==1&&x.underlying_symbol))&&classifyMarket(x)!=='Other');
       renderMarkets();
-      markets.forEach(x=>subscribe(x.symbol));
+      markets.forEach(x=>subscribe(x.underlying_symbol||x.symbol));
       return;
     }
-    if(m.msg_type==='history'&&m.history&&m.echo_req&&m.echo_req.ticks_history){
+    if(m.msg_type==='history'&&m.history){
       const s=(m.echo_req&&m.echo_req.ticks_history)||pendingHistorySymbol;
       pendingHistorySymbol=s;
-  const b=ensureBuffer(s);
+      const b=ensureBuffer(s);
       b.length=0;
       (m.history.prices||[]).forEach(q=>b.push(lastDigit(q)));
       if(s===selectedSymbol){renderStream();update()}
       return;
     }
     if(m.msg_type==='tick'&&m.tick){
-      const s=m.tick.symbol||m.echo_req&&m.echo_req.ticks||selectedSymbol;
       const s=m.tick.symbol||m.tick.underlying_symbol||(m.echo_req&&m.echo_req.ticks)||selectedSymbol;
       const b=ensureBuffer(s),d=lastDigit(m.tick.quote);
       b.push(d);if(b.length>MAX)b.shift();
