@@ -16,4 +16,5 @@ function connect(){if(socket)try{socket.close()}catch(_){};socket=new WebSocket(
 async function startCollector(){await initDb();setInterval(flush,1000);setInterval(prune,6*60*60*1000);await flush();await prune();connect()}
 function status(){return{running:true,connected,marketCount,queuedTicks:queue.length,totalReceived,totalStored,lastTickAt,lastDbWriteAt,lastError,retentionDays:RETENTION_DAYS}}
 async function databaseStatus(){if(!pool)return{ok:false,error:'database not initialized'};try{const r=await pool.query('SELECT COUNT(*)::bigint AS ticks, COUNT(DISTINCT symbol)::bigint AS markets, MAX(received_at) AS latest_received, MIN(received_at) AS oldest_received FROM deriv_ticks');return{ok:true,...r.rows[0]}}catch(err){return{ok:false,error:err.message}}}
-module.exports={startCollector,status,databaseStatus};
+async function databaseHistory(symbol,count=500){if(!pool)return{ok:false,error:'database not initialized',ticks:[]};try{const r=await pool.query('SELECT epoch,quote,digit FROM deriv_ticks WHERE symbol=$1 ORDER BY epoch DESC LIMIT $2',[symbol,count]);return{ok:true,symbol,ticks:r.rows.reverse()}}catch(err){return{ok:false,error:err.message,ticks:[]}}}
+module.exports={startCollector,status,databaseStatus,databaseHistory};
