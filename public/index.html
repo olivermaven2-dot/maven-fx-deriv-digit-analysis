@@ -177,36 +177,104 @@ function recentStats(b,c){
 }
 function update(){
   const b=ensureBuffer(selectedSymbol),c=$('contract').value,cmp=pair(c);
-  if(b.length<30){$('samples').textContent=b.length;return}
+  if(b.length<60){$('samples').textContent=b.length;return}
+
   const counts=Array(10).fill(0);b.forEach(d=>counts[d]++);
   $('samples').textContent=b.length;
   $('digits').innerHTML=counts.map((n,i)=>'<div class="digit"><b>'+i+'</b>'+pct(n/b.length)+'</div>').join('');
+
   const st=recentStats(b,c),sc=recentStats(b,cmp);
-  $('selected').textContent=pct(st.p);$('comparison').textContent=pct(sc.p);
-  const edge=st.p-sc.p;$('edge').textContent=(edge>=0?'+':'')+pct(edge);
-  $('momentum').textContent=st.m>.10?'POSITIVE':st.m<-.10?'NEGATIVE':'NEUTRAL';
-  $('trend').textContent=st.trend>.12?'UPWARD':st.trend<-.12?'DOWNWARD':'BALANCED';
-  $('transition').textContent=st.transition>.60?'FAVOURABLE':st.transition<.40?'UNFAVOURABLE':'MIXED';
-  let runs=0,goodRuns=0,run=0;for(const d of b.slice(-80)){if(qualifies(d,c))run++;else{if(run>=2){runs++;if(run>=3)goodRuns++}run=0}}if(run>=2){runs++;if(run>=3)goodRuns++}
-  $('cluster').textContent=goodRuns?'ACTIVE':'BALANCED';
-  let bestDigit=-1,bestScore=-1,bestN=0;
-  for(let d=0;d<10;d++){
-    let n=0,good=0;for(let i=0;i<b.length-1;i++)if(b[i]===d){n++;if(qualifies(b[i+1],c))good++}
-    if(n>=5){const raw=good/n,shrunk=(good+2*.5)/(n+2);const score=shrunk+Math.min(.08,n/40)*Math.max(0,raw-.5);if(score>bestScore){bestScore=score;bestDigit=d;bestN=n}}
+  $('selected').textContent=pct(st.p);
+  $('comparison').textContent=pct(sc.p);
+
+  const edge=st.p-sc.p;
+  $('edge').textContent=(edge>=0?'+':'')+pct(edge);
+
+  $('momentum').textContent=st.m>.06?'POSITIVE':st.m<-.06?'NEGATIVE':'NEUTRAL';
+  $('trend').textContent=st.trend>.08?'UPWARD':st.trend<-.08?'DOWNWARD':'BALANCED';
+  $('transition').textContent=st.transition>.58?'FAVOURABLE':st.transition<.42?'UNFAVOURABLE':'MIXED';
+
+  let runs=0,goodRuns=0,run=0;
+  for(const d of b.slice(-100)){
+    if(qualifies(d,c))run++;
+    else{if(run>=2){runs++;if(run>=3)goodRuns++}run=0}
   }
-  $('entry').textContent=bestDigit<0?'—':bestDigit+' · '+pct(bestScore);
+  if(run>=2){runs++;if(run>=3)goodRuns++}
+  $('cluster').textContent=goodRuns?'ACTIVE':'BALANCED';
+
+  // Conditional entry-digit engine: measure what tends to happen AFTER each digit.
+  let bestDigit=-1,bestScore=-1,bestN=0,bestRaw=.5;
+  for(let d=0;d<10;d++){
+    let n=0,good=0;
+    for(let i=0;i<b.length-1;i++){
+      if(b[i]===d){n++;if(qualifies(b[i+1],c))good++}
+    }
+    if(n>=8){
+      const raw=good/n;
+      const shrunk=(good+4*.5)/(n+4);
+      const sampleWeight=Math.min(1,n/30);
+      const score=.75*shrunk+.25*raw;
+      const weighted=.5+.5*(score-.5)*sampleWeight;
+      if(weighted>bestScore){bestScore=weighted;bestDigit=d;bestN=n;bestRaw=raw}
+    }
+  }
+  const entryProb=bestDigit<0?.5:(bestRaw);
+  $('entry').textContent=bestDigit<0?'—':bestDigit+' · '+pct(entryProb);
   $('entryReason').textContent=bestDigit<0?'Need more transition samples':bestN+' observed follow-throughs from this digit';
-  const momentumScore=Math.max(-1,Math.min(1,st.m/0.25)),trendScore=Math.max(-1,Math.min(1,st.trend/0.35)),transScore=(st.transition-.5)*2;
-  const probScore=Math.max(-1,Math.min(1,edge/0.15));
-  const score=.50*probScore+.20*momentumScore+.15*trendScore+.15*transScore;
-  const confidence=Math.max(0,Math.min(99,50+score*45));
-  $('confidence').textContent=confidence.toFixed(0)+'%';
-  let signal='WAIT',reason='No clear alignment yet';
-  if(sc.p>st.p+.04){signal='BLOCKED';reason='Comparison contract has the stronger observed probability'}
-  else if(st.p>=.55&&edge>=.08&&score>=.35){signal=side(c)+' '+threshold(c);reason='Probability edge + momentum + transition align'}
-  else if(st.p>=.53&&edge>=.04&&score>=.15){signal='WATCH '+side(c)+' '+threshold(c);reason='Positive alignment, but not enough confirmation'}
-  else if(st.p<.50){signal='WAIT';reason='Selected side is below 50% in the current sample'};
-  $('signal').textContent=signal;$('reason').textContent=reason;
+
+  // Six independent gates. A signal is issued only when the evidence agrees.
+  const probabilityGate=st.p>=.54 && edge>=.06;
+  const comparisonGate=sc.p<=st.p+.02;
+  const momentumGate=st.m>.03;
+  const trendGate=st.trend>.05;
+  const transitionGate=st.transition>=.56;
+  const entryGate=bestDigit>=0 && bestN>=8 && entryProb>=.60;
+
+  // For Under contracts, the directional signs above must be inverted.
+  const directionalMomentum=side(c)==='OVER'?st.m>0.03:st.m<-0.03;
+  const directionalTrend=side(c)==='OVER'?st.trend>0.05:st.trend<-0.05;
+  const directionalTransition=st.transition>=.56;
+
+  const gates=[
+    probabilityGate,
+    comparisonGate,
+    directionalMomentum,
+    directionalTrend,
+    directionalTransition,
+    entryGate
+  ];
+  const passed=gates.filter(Boolean).length;
+
+  // Separate score is used only to describe strength; it is NOT a claimed win probability.
+  const probScore=Math.max(0,Math.min(1,(edge-.02)/.13));
+  const momentumScore=Math.max(0,Math.min(1,Math.abs(st.m)/.20));
+  const trendScore=Math.max(0,Math.min(1,Math.abs(st.trend)/.30));
+  const transitionScore=Math.max(0,Math.min(1,(st.transition-.50)/.20));
+  const entryScore=bestDigit>=0?Math.max(0,Math.min(1,(entryProb-.50)/.25)):0;
+  const strength=(probScore+momentumScore+trendScore+transitionScore+entryScore)/5;
+  const confidence=Math.round(Math.max(0,Math.min(99,50+strength*45)));
+  $('confidence').textContent=confidence+'%';
+
+  let signal='WAIT',reason='Insufficient confluence';
+  if(sc.p>st.p+.04){
+    signal='BLOCKED';
+    reason='Comparison contract has the stronger observed probability';
+  }else if(passed>=5){
+    signal=side(c)+' '+threshold(c);
+    reason=passed+'/6 confirmation gates passed; strongest evidence agrees';
+  }else if(passed>=4){
+    signal='WATCH '+side(c)+' '+threshold(c);
+    reason=passed+'/6 gates passed; waiting for one more confirmation';
+  }else if(st.p<.50){
+    signal='WAIT';
+    reason='Selected side is below 50% in the current sample';
+  }else{
+    signal='WAIT';
+    reason=passed+'/6 gates passed; evidence is not strong enough';
+  }
+
+  $('signal').textContent=signal;
+  $('reason').textContent=reason;
 }
 $('market').onchange=()=>loadHistory($('market').value);
 $('contract').onchange=update;
