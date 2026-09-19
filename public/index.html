@@ -165,13 +165,39 @@ function subscribe(s){
   if(!ws||ws.readyState!==1||!s||activeSubs[s])return;
   activeSubs[s]=true;ws.send(JSON.stringify({ticks:s,subscribe:1}));
 }
+async function loadBackgroundAnalysis(s){
+  try{
+    const r=await fetch('/market-analysis?symbol='+encodeURIComponent(s),{cache:'no-store'});
+    const x=await r.json();
+    const a=x.contracts&&x.contracts[$('contract').value];
+    if(!a||!a.ready)return;
+    $('samples').textContent=a.samples||0;
+    $('selected').textContent=pct(a.selectedProbability||0);
+    $('comparison').textContent=pct(a.comparisonProbability||0);
+    $('edge').textContent=(a.edge>=0?'+':'')+pct(a.edge||0);
+    $('momentum').textContent=a.momentum>.06?'POSITIVE':a.momentum<-.06?'NEGATIVE':'NEUTRAL';
+    $('trend').textContent=a.trend>.08?'UPWARD':a.trend<-.08?'DOWNWARD':'BALANCED';
+    $('transition').textContent=a.transition>.58?'FAVOURABLE':a.transition<.42?'UNFAVOURABLE':'MIXED';
+    $('entry').textContent=a.entryDigit<0?'—':a.entryDigit+' · '+pct(a.entryProbability||0);
+    $('entryReason').textContent=a.entryDigit<0?'Need more transition samples':'Server-side conditional follow-through';
+    $('signal').textContent=a.signal||'WAIT';
+    $('reason').textContent=(a.gatesPassed||0)+'/6 server-side confirmation gates · continuously updated';
+    $('confidence').textContent='—';
+  }catch(e){}
+}
 function loadHistory(s){
   selectedSymbol=s;ensureBuffer(s).length=0;
   $('signal').textContent='LOADING';
-  $('reason').textContent='Loading recent ticks for '+s+'…';
+  $('reason').textContent='Loading stored history and ongoing background analysis for '+s+'…';
   pendingHistorySymbol=s;
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks',subscribe:0}));
-  renderStream();update();
+  fetch('/market-history?symbol='+encodeURIComponent(s)+'&count=500',{cache:'no-store'}).then(r=>r.json()).then(x=>{
+    const rows=x.ticks||[];
+    if(selectedSymbol!==s)return;
+    if(rows.length){const b=ensureBuffer(s);b.length=0;rows.forEach(t=>b.push(Number(t.digit)));renderStream();update();}
+    else if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks',subscribe:0}));
+    loadBackgroundAnalysis(s);
+  }).catch(()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks',subscribe:0}))});
+  renderStream();
 }
 function renderStream(){const b=ensureBuffer(selectedSymbol);$('ticks').textContent=b.slice(-120).reverse().join('  ')}
 function recentStats(b,c){
@@ -306,5 +332,5 @@ async function refreshCollector(){
     $('collectorOnline').textContent='UNREACHABLE';$('collectorOnline').className='online bad';$('collectorDb').textContent='Collector status endpoint unavailable';
   }
 }
-connect();refreshCollector();setInterval(refreshCollector,5000);
+connect();refreshCollector();setInterval(refreshCollector,5000);setInterval(()=>{if(selectedSymbol)loadBackgroundAnalysis(selectedSymbol)},3000);
 </script></body></html>
