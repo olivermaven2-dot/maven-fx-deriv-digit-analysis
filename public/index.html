@@ -1,1 +1,179 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maven FX — Deriv Digit Analysis</title><style>*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;background:#071018;color:#eaf2f7}header{padding:18px 20px;border-bottom:1px solid #1b2b36;background:#0a151e;position:sticky;top:0;z-index:2}h1{margin:0;font-size:21px}main{max-width:1100px;margin:auto;padding:18px}.controls,.grid{display:grid;gap:12px}.controls{grid-template-columns:1fr 1fr auto}.grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px}.card{background:#0d1a24;border:1px solid #1b303d;border-radius:14px;padding:15px}.wide{grid-column:1/-1}.label{font-size:11px;color:#89a1ae;text-transform:uppercase;letter-spacing:.08em}.value{font-size:24px;font-weight:800;margin-top:5px}select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414f;background:#0a151e;color:#eaf2f7}button{cursor:pointer}.signal{font-size:28px;font-weight:900}.digits{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin-top:10px}.digit{padding:8px 3px;text-align:center;background:#09141c;border-radius:8px}.digit b{display:block}.ticks{height:180px;overflow:auto;font-family:monospace;font-size:13px;line-height:1.7;color:#a9c1cc}.muted{color:#78909c;font-size:12px}@media(max-width:700px){.controls,.grid{grid-template-columns:1fr}.wide{grid-column:auto}.digits{grid-template-columns:repeat(5,1fr)}}</style></head><body><header><h1>Maven FX · Deriv Digit Analysis</h1><div class="muted">Live digit analysis only — no trading/account connection</div></header><main><section class="controls"><select id="market"><option value="">Loading markets…</option></select><select id="contract"><option value="over1">Over 1</option><option value="under8">Under 8</option><option value="over2">Over 2</option><option value="under7">Under 7</option></select><button id="reconnect">Reconnect</button></section><section class="grid"><div class="card wide"><div class="label">Final signal</div><div id="signal" class="signal">WAITING FOR DATA</div><div id="reason" class="muted">Collecting live ticks…</div></div><div class="card"><div class="label">Selected probability</div><div id="selected" class="value">—</div></div><div class="card"><div class="label">Comparison probability</div><div id="comparison" class="value">—</div></div><div class="card"><div class="label">Momentum</div><div id="momentum" class="value">—</div></div><div class="card"><div class="label">Trend</div><div id="trend" class="value">—</div></div><div class="card"><div class="label">Clustering</div><div id="cluster" class="value">—</div></div><div class="card"><div class="label">Transitioning</div><div id="transition" class="value">—</div></div><div class="card"><div class="label">Entry digit</div><div id="entry" class="value">—</div></div><div class="card wide"><div class="label">Digit probability</div><div id="digits" class="digits"></div></div><div class="card wide"><div class="label">Live last-digit stream</div><div id="ticks" class="ticks"></div></div></section></main><script>const WS='wss://ws.derivws.com/websockets/v3?app_id=1089';let ws=null,markets=[],symbol='',digits=[],max=200;const $=id=>document.getElementById(id);function log(x){$('ticks').innerHTML=x+'<br>'+$('ticks').innerHTML;if($('ticks').innerHTML.length>12000)$('ticks').innerHTML=$('ticks').innerHTML.slice(0,12000)}function lastDigit(q){const s=String(q);const p=s.indexOf('.');return +(p<0?s.at(-1):s.slice(p+1).at(-1)||'0')}function pct(n){return (n*100).toFixed(1)+'%'}function contract(){return $('contract').value}function compare(c){return c==='over1'?'under8':c==='under8'?'over1':c==='over2'?'under7':'over2'}function qualifies(d,c){if(c==='over1')return d>1;if(c==='under8')return d<8;if(c==='over2')return d>2;return d<7}function update(){if(digits.length<20)return;const counts=Array(10).fill(0);digits.forEach(d=>counts[d]++);const probs=counts.map(x=>x/digits.length);$('digits').innerHTML=probs.map((p,i)=>'<div class="digit"><b>'+i+'</b>'+pct(p)+'</div>').join('');const c=contract(),cmp=compare(c);const pSel=digits.filter(d=>qualifies(d,c)).length/digits.length,pCmp=digits.filter(d=>qualifies(d,cmp)).length/digits.length;$('selected').textContent=pct(pSel);$('comparison').textContent=pct(pCmp);const recent=digits.slice(-20);const first=recent.slice(0,10).filter(d=>qualifies(d,c)).length/10,last=recent.slice(-10).filter(d=>qualifies(d,c)).length/10;const m=last-first;$('momentum').textContent=m>.1?'BULLISH':m<-.1?'BEARISH':'NEUTRAL';const avg=recent.reduce((a,b)=>a+b,0)/recent.length;$('trend').textContent=avg>5.5?'HIGH DIGIT':avg<3.5?'LOW DIGIT':'BALANCED';const hits=counts.filter(x=>x>digits.length/10*1.2).length;$('cluster').textContent=hits?'ACTIVE':'BALANCED';const a=recent.at(-1),b=recent.at(-2);$('transition').textContent=a===b?'REPEATING':qualifies(a,c)?'FAVOURABLE':'MIXED';let entry=-1,best=-1;for(let i=0;i<10;i++){if(!counts[i])continue;const following=[];for(let j=0;j<digits.length-1;j++)if(digits[j]===i)following.push(digits[j+1]);if(following.length<3)continue;const score=following.filter(x=>qualifies(x,c)).length/following.length;if(score>best){best=score;entry=i}}$('entry').textContent=entry<0?'—':entry+' ('+pct(best)+')';let signal='WAIT',reason='Signals are mixed';if(pSel>.55&&pSel>pCmp+0.08&&m>.05){signal=c.toUpperCase();reason='Probability, comparison gate and recent momentum align'}else if(pCmp>pSel){signal='BLOCKED';reason='Comparison contract currently has stronger observed probability'}$('signal').textContent=signal;$('reason').textContent=reason}function subscribe(){if(!ws||ws.readyState!==1||!symbol)return;ws.send(JSON.stringify({ticks:symbol,subscribe:1}))}function connect(){if(ws)try{ws.close()}catch(e){}ws=new WebSocket(WS);ws.onopen=()=>{ws.send(JSON.stringify({active_symbols:'brief',product_type:'basic'}))};ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.msg_type==='active_symbols'){markets=m.active_symbols.filter(x=>x.is_trading===1&&/^(R_|1HZ|JD)/.test(x.symbol));$('market').innerHTML=markets.map(x=>'<option value="'+x.symbol+'">'+x.display_name+'</option>').join('');symbol=$('market').value;subscribe()}if(m.msg_type==='tick'&&m.tick){const d=lastDigit(m.tick.quote);digits.push(d);if(digits.length>max)digits.shift();log(d);update()}};ws.onclose=()=>log('WebSocket closed — press Reconnect') ;ws.onerror=()=>log('WebSocket error')}$('market').onchange=()=>{symbol=$('market').value;digits=[];subscribe()};$('contract').onchange=update;$('reconnect').onclick=connect;connect();</script></body></html>
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maven FX — Deriv Digit Analysis</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;background:#071018;color:#eaf2f7}
+header{padding:18px 20px;border-bottom:1px solid #1b2b36;background:#0a151e;position:sticky;top:0;z-index:2}
+h1{margin:0;font-size:21px}.muted{color:#78909c;font-size:12px}
+main{max-width:1100px;margin:auto;padding:18px}.controls,.grid{display:grid;gap:12px}.controls{grid-template-columns:1.3fr 1fr auto}
+.grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px}.card{background:#0d1a24;border:1px solid #1b303d;border-radius:14px;padding:15px}.wide{grid-column:1/-1}
+.label{font-size:11px;color:#89a1ae;text-transform:uppercase;letter-spacing:.08em}.value{font-size:23px;font-weight:800;margin-top:5px}
+select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414f;background:#0a151e;color:#eaf2f7}button{cursor:pointer}
+.signal{font-size:28px;font-weight:900}.status{margin-top:8px}.digits{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin-top:10px}
+.digit{padding:9px 3px;text-align:center;background:#09141c;border-radius:8px}.digit b{display:block;margin-bottom:3px}.ticks{height:190px;overflow:auto;font-family:monospace;font-size:13px;line-height:1.7;color:#a9c1cc}
+.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.meta div{background:#09141c;padding:9px;border-radius:9px}
+@media(max-width:700px){.controls,.grid{grid-template-columns:1fr}.wide{grid-column:auto}.digits{grid-template-columns:repeat(5,1fr)}.meta{grid-template-columns:1fr 1fr}}
+</style></head>
+<body>
+<header><h1>Maven FX · Deriv Digit Analysis</h1><div class="muted">Live digit analysis only — no trading/account connection</div></header>
+<main>
+<section class="controls">
+<select id="market"><option value="">Loading Volatility & Jump markets…</option></select>
+<select id="contract">
+<option value="over1">Over 1</option><option value="under8">Under 8</option>
+<option value="over2">Over 2</option><option value="under7">Under 7</option>
+<option value="over3">Over 3</option><option value="under6">Under 6</option>
+<option value="over4">Over 4</option><option value="under5">Under 5</option>
+<option value="over5">Over 5</option><option value="under4">Under 4</option>
+<option value="over6">Over 6</option><option value="under3">Under 3</option>
+<option value="over7">Over 7</option><option value="under2">Under 2</option>
+<option value="over8">Over 8</option><option value="under1">Under 1</option>
+</select>
+<button id="reconnect">Reconnect</button>
+</section>
+<section class="grid">
+<div class="card wide"><div class="label">Final signal</div><div id="signal" class="signal">WAITING FOR DATA</div><div id="reason" class="muted">Building the selected market history…</div>
+<div class="meta"><div><span class="label">Confidence</span><br><b id="confidence">—</b></div><div><span class="label">Probability edge</span><br><b id="edge">—</b></div><div><span class="label">Samples</span><br><b id="samples">0</b></div></div></div>
+<div class="card"><div class="label">Selected probability</div><div id="selected" class="value">—</div></div>
+<div class="card"><div class="label">Comparison probability</div><div id="comparison" class="value">—</div></div>
+<div class="card"><div class="label">Momentum</div><div id="momentum" class="value">—</div></div>
+<div class="card"><div class="label">Trend</div><div id="trend" class="value">—</div></div>
+<div class="card"><div class="label">Clustering</div><div id="cluster" class="value">—</div></div>
+<div class="card"><div class="label">Transitioning</div><div id="transition" class="value">—</div></div>
+<div class="card"><div class="label">Entry digit</div><div id="entry" class="value">—</div><div id="entryReason" class="muted">Conditional follow-through</div></div>
+<div class="card wide"><div class="label">Digit probability</div><div id="digits" class="digits"></div></div>
+<div class="card wide"><div class="label">Live last-digit stream</div><div id="ticks" class="ticks"></div></div>
+</section></main>
+<script>
+const WS='wss://ws.derivws.com/websockets/v3?app_id=1089';
+const MAX=500;
+let ws=null,markets=[],selectedSymbol='',buffers={},activeSubs={};
+const $=id=>document.getElementById(id);
+const pairMap={over1:'under8',under8:'over1',over2:'under7',under7:'over2',over3:'under6',under6:'over3',over4:'under5',under5:'over4',over5:'under4',under4:'over5',over6:'under3',under3:'over6',over7:'under2',under2:'over7',over8:'under1',under1:'over8'};
+function pct(x){return (x*100).toFixed(1)+'%'}
+function side(c){return c.startsWith('over')?'OVER':'UNDER'}
+function threshold(c){return Number(c.replace('over','').replace('under',''))}
+function qualifies(d,c){const n=threshold(c);return side(c)==='OVER'?d>n:d<n}
+function pair(c){return pairMap[c]}
+function ensureBuffer(s){if(!buffers[s])buffers[s]=[];return buffers[s]}
+function lastDigit(q){
+  const s=String(q);
+  const dot=s.indexOf('.');
+  if(dot<0)return Number(s.slice(-1));
+  const frac=s.slice(dot+1).replace(/[^0-9]/g,'');
+  return Number(frac.length?frac.slice(-1):'0');
+}
+function log(x){$('ticks').innerHTML=x+'<br>'+$('ticks').innerHTML;if($('ticks').innerHTML.length>14000)$('ticks').innerHTML=$('ticks').innerHTML.slice(0,14000)}
+function classifyMarket(m){
+  const n=(m.display_name||m.symbol||'').toLowerCase();
+  if(n.includes('jump'))return 'Jump Indices';
+  if(n.includes('volatility'))return n.includes('1s')||n.includes('1-second')?'Volatility 1s':'Volatility Indices';
+  return 'Other';
+}
+function renderMarkets(){
+  const groups={'Jump Indices':[],'Volatility 1s':[],'Volatility Indices':[]};
+  markets.forEach(m=>{const g=classifyMarket(m);if(groups[g])groups[g].push(m)});
+  $('market').innerHTML='';
+  Object.entries(groups).forEach(([g,arr])=>{
+    if(!arr.length)return;
+    const og=document.createElement('optgroup');og.label=g;
+    arr.sort((a,b)=>(a.display_name||'').localeCompare(b.display_name||'')).forEach(m=>{
+      const o=document.createElement('option');o.value=m.symbol;o.textContent=m.display_name||m.symbol;og.appendChild(o);
+    });$('market').appendChild(og);
+  });
+  const first=$('market').querySelector('option');if(first&&!selectedSymbol){selectedSymbol=first.value;$('market').value=selectedSymbol;loadHistory(selectedSymbol)}
+}
+function connect(){
+  if(ws)try{ws.close()}catch(e){}
+  buffers={};activeSubs={};selectedSymbol='';
+  ws=new WebSocket(WS);
+  ws.onopen=()=>{log('Connected to Deriv');ws.send(JSON.stringify({active_symbols:'brief',product_type:'basic'}))}
+  ws.onmessage=e=>{
+    let m;try{m=JSON.parse(e.data)}catch(_){return}
+    if(m.error){log('Deriv error: '+m.error.message);return}
+    if(m.msg_type==='active_symbols'){
+      markets=m.active_symbols.filter(x=>x.is_trading===1&&classifyMarket(x)!=='Other');
+      renderMarkets();
+      markets.forEach(x=>subscribe(x.symbol));
+      return;
+    }
+    if(m.msg_type==='history'&&m.history&&m.echo_req&&m.echo_req.ticks_history){
+      const s=m.echo_req.ticks_history;
+      const b=ensureBuffer(s);
+      b.length=0;
+      (m.history.prices||[]).forEach(q=>b.push(lastDigit(q)));
+      if(s===selectedSymbol){renderStream();update()}
+      return;
+    }
+    if(m.msg_type==='tick'&&m.tick){
+      const s=m.tick.symbol||m.echo_req&&m.echo_req.ticks||selectedSymbol;
+      const b=ensureBuffer(s),d=lastDigit(m.tick.quote);
+      b.push(d);if(b.length>MAX)b.shift();
+      if(s===selectedSymbol){log(d);renderStream();update()}
+    }
+  };
+  ws.onerror=()=>log('WebSocket error');
+  ws.onclose=()=>log('WebSocket closed');
+}
+function subscribe(s){
+  if(!ws||ws.readyState!==1||!s||activeSubs[s])return;
+  activeSubs[s]=true;ws.send(JSON.stringify({ticks:s,subscribe:1}));
+}
+function loadHistory(s){
+  selectedSymbol=s;ensureBuffer(s).length=0;
+  $('signal').textContent='LOADING';
+  $('reason').textContent='Loading recent ticks for '+s+'…';
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks'}));
+  renderStream();update();
+}
+function renderStream(){const b=ensureBuffer(selectedSymbol);$('ticks').textContent=b.slice(-120).reverse().join('  ')}
+function recentStats(b,c){
+  const n=b.length;if(!n)return {p:0,m:0,trend:0,transition:0};
+  const recent=b.slice(-60),mid=Math.max(1,Math.floor(recent.length/2));
+  const p=x=>x.filter(d=>qualifies(d,c)).length/x.length;
+  const pOld=p(recent.slice(0,mid)),pNew=p(recent.slice(mid));
+  const avg=recent.reduce((a,d)=>a+d,0)/recent.length;
+  const tr=side(c)==='OVER'?(avg-4.5)/4.5:(4.5-avg)/4.5;
+  const last=recent[recent.length-1];
+  const follows=[];for(let i=0;i<b.length-1;i++)if(b[i]===last)follows.push(qualifies(b[i+1],c));
+  const trans=follows.length?follows.filter(Boolean).length/follows.length:p(recent);
+  return {p:p(b),m:pNew-pOld,trend:tr,transition:trans,last};
+}
+function update(){
+  const b=ensureBuffer(selectedSymbol),c=$('contract').value,cmp=pair(c);
+  if(b.length<30){$('samples').textContent=b.length;return}
+  const counts=Array(10).fill(0);b.forEach(d=>counts[d]++);
+  $('samples').textContent=b.length;
+  $('digits').innerHTML=counts.map((n,i)=>'<div class="digit"><b>'+i+'</b>'+pct(n/b.length)+'</div>').join('');
+  const st=recentStats(b,c),sc=recentStats(b,cmp);
+  $('selected').textContent=pct(st.p);$('comparison').textContent=pct(sc.p);
+  const edge=st.p-sc.p;$('edge').textContent=(edge>=0?'+':'')+pct(edge);
+  $('momentum').textContent=st.m>.10?'POSITIVE':st.m<-.10?'NEGATIVE':'NEUTRAL';
+  $('trend').textContent=st.trend>.12?'UPWARD':st.trend<-.12?'DOWNWARD':'BALANCED';
+  $('transition').textContent=st.transition>.60?'FAVOURABLE':st.transition<.40?'UNFAVOURABLE':'MIXED';
+  let runs=0,goodRuns=0,run=0;for(const d of b.slice(-80)){if(qualifies(d,c))run++;else{if(run>=2){runs++;if(run>=3)goodRuns++}run=0}}if(run>=2){runs++;if(run>=3)goodRuns++}
+  $('cluster').textContent=goodRuns?'ACTIVE':'BALANCED';
+  let bestDigit=-1,bestScore=-1,bestN=0;
+  for(let d=0;d<10;d++){
+    let n=0,good=0;for(let i=0;i<b.length-1;i++)if(b[i]===d){n++;if(qualifies(b[i+1],c))good++}
+    if(n>=5){const raw=good/n,shrunk=(good+2*.5)/(n+2);const score=shrunk+Math.min(.08,n/40)*Math.max(0,raw-.5);if(score>bestScore){bestScore=score;bestDigit=d;bestN=n}}
+  }
+  $('entry').textContent=bestDigit<0?'—':bestDigit+' · '+pct(bestScore);
+  $('entryReason').textContent=bestDigit<0?'Need more transition samples':bestN+' observed follow-throughs from this digit';
+  const momentumScore=Math.max(-1,Math.min(1,st.m/0.25)),trendScore=Math.max(-1,Math.min(1,st.trend/0.35)),transScore=(st.transition-.5)*2;
+  const probScore=Math.max(-1,Math.min(1,edge/0.15));
+  const score=.50*probScore+.20*momentumScore+.15*trendScore+.15*transScore;
+  const confidence=Math.max(0,Math.min(99,50+score*45));
+  $('confidence').textContent=confidence.toFixed(0)+'%';
+  let signal='WAIT',reason='No clear alignment yet';
+  if(sc.p>st.p+.04){signal='BLOCKED';reason='Comparison contract has the stronger observed probability'}
+  else if(st.p>=.55&&edge>=.08&&score>=.35){signal=side(c)+' '+threshold(c);reason='Probability edge + momentum + transition align'}
+  else if(st.p>=.53&&edge>=.04&&score>=.15){signal='WATCH '+side(c)+' '+threshold(c);reason='Positive alignment, but not enough confirmation'}
+  else if(st.p<.50){signal='WAIT';reason='Selected side is below 50% in the current sample'};
+  $('signal').textContent=signal;$('reason').textContent=reason;
+}
+$('market').onchange=()=>loadHistory($('market').value);
+$('contract').onchange=update;
+$('reconnect').onclick=connect;
+connect();
+</script></body></html>
