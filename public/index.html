@@ -45,7 +45,7 @@ select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414
 <div class="card wide"><div class="label">Live last-digit stream</div><div id="ticks" class="ticks"></div></div>
 </section></main>
 <script>
-const WS='wss://ws.binaryws.com/websockets/v3';
+const WS='wss://api.derivws.com/trading/v1/options/ws/public';
 const MAX=500;
 let ws=null,markets=[],selectedSymbol='',buffers={},activeSubs={},pendingHistorySymbol='';
 const $=id=>document.getElementById(id);
