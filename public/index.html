@@ -77,8 +77,8 @@ function renderMarkets(){
   Object.entries(groups).forEach(([g,arr])=>{
     if(!arr.length)return;
     const og=document.createElement('optgroup');og.label=g;
-    arr.sort((a,b)=>(a.display_name||'').localeCompare(b.display_name||'')).forEach(m=>{
-      const o=document.createElement('option');o.value=m.symbol;o.textContent=m.display_name||m.symbol;og.appendChild(o);
+    arr.sort((a,b)=>(a.underlying_symbol_name||a.display_name||a.underlying_symbol||a.symbol||'').localeCompare(b.underlying_symbol_name||b.display_name||b.underlying_symbol||b.symbol||'')).forEach(m=>{
+      const o=document.createElement('option');o.value=m.underlying_symbol||m.symbol;o.textContent=m.underlying_symbol_name||m.display_name||m.underlying_symbol||m.symbol;og.appendChild(o);
     });$('market').appendChild(og);
   });
   const first=$('market').querySelector('option');if(first&&!selectedSymbol){selectedSymbol=first.value;$('market').value=selectedSymbol;loadHistory(selectedSymbol)}
