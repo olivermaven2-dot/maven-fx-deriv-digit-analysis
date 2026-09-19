@@ -61,115 +61,76 @@ select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414
 <div class="card wide"><div class="label">Live last-digit stream</div><div id="ticks" class="ticks"></div></div>
 </section></main>
 <script>
-const WS='wss://api.derivws.com/trading/v1/options/ws/public';
 const MAX=500;
-let ws=null,markets=[],selectedSymbol='',buffers={},activeSubs={},pendingHistorySymbol='';
+let markets=[],selectedSymbol='',buffers={};
 const $=id=>document.getElementById(id);
-const pairMap={over1:'under8',under8:'over1',over2:'under7',under7:'over2',over3:'under6',under6:'over3',over4:'under5',under5:'over4',over5:'under4',under4:'over5',over6:'under3',under3:'over6',over7:'under2',under2:'over7',over8:'under1',under1:'over8'};
+const pairMap={over1:'under8',under8:'over1',over2:'under7',under7:'over2',over3:'under6',under6:'over4',over4:'under5',under5:'over4',over5:'under4',under4:'over5',over6:'under3',under3:'over6',over7:'under2',under2:'over7',over8:'under1',under1:'over8'};
 function pct(x){return (x*100).toFixed(1)+'%'}
 function side(c){return c.startsWith('over')?'OVER':'UNDER'}
 function threshold(c){return Number(c.replace('over','').replace('under',''))}
 function qualifies(d,c){const n=threshold(c);return side(c)==='OVER'?d>n:d<n}
 function pair(c){return pairMap[c]}
 function ensureBuffer(s){if(!buffers[s])buffers[s]=[];return buffers[s]}
-function lastDigit(q,pipSize){
-  const n=Number(q);
-  if(Number.isFinite(n)&&Number.isInteger(Number(pipSize))&&Number(pipSize)>=0){
-    const places=Number(pipSize);
-    const scaled=Math.round(Math.abs(n)*Math.pow(10,places));
-    return scaled%10;
-  }
-  const s=String(q);
-  const dot=s.indexOf('.');
-  if(dot<0)return Number(s.slice(-1));
-  const frac=s.slice(dot+1).replace(/[^0-9]/g,'');
-  return Number(frac.length?frac.slice(-1):'0');
-}
-function log(x){$('ticks').innerHTML=x+'<br>'+$('ticks').innerHTML;if($('ticks').innerHTML.length>14000)$('ticks').innerHTML=$('ticks').innerHTML.slice(0,14000)}
-function formatQuote(q,pipSize){
-  const n=Number(q);
-  if(!Number.isFinite(n))return String(q);
-  const p=Number(pipSize);
-  if(Number.isInteger(p)&&p>=0&&p<=10)return n.toFixed(p);
-  if(Number.isFinite(p)&&p>0&&p<1){
-    const places=Math.max(0,Math.min(10,(String(p).split('.')[1]||'').replace(/0+$/,'').length));
-    return n.toFixed(places);
-  }
-  return String(q);
-}
-function showLastTick(quote,digit,symbol,pipSize){
-  $('lastTick').textContent=formatQuote(quote,pipSize);
-  $('lastDigit').textContent=String(digit);
-  $('lastTickMarket').textContent=(symbol||selectedSymbol||'').toUpperCase();
-}
-function classifyMarket(m){
-  const n=(m.underlying_symbol_name||m.display_name||m.symbol||m.underlying_symbol||'').toLowerCase();
-  if(n.includes('jump'))return 'Jump Indices';
-  if(n.includes('volatility'))return n.includes('1s')||n.includes('1-second')?'Volatility 1s':'Volatility Indices';
-  return 'Other';
+function showLastTick(row,s){
+  if(!row)return;
+  $('lastTick').textContent=Number(row.quote).toString();
+  $('lastDigit').textContent=String(row.digit);
+  $('lastTickMarket').textContent=(s||'').toUpperCase();
 }
 function renderMarkets(){
   const groups={'Jump Indices':[],'Volatility 1s':[],'Volatility Indices':[]};
-  markets.forEach(m=>{const g=classifyMarket(m);if(groups[g])groups[g].push(m)});
+  markets.forEach(m=>{if(groups[m.group])groups[m.group].push(m)});
   $('market').innerHTML='';
   Object.entries(groups).forEach(([g,arr])=>{
     if(!arr.length)return;
     const og=document.createElement('optgroup');og.label=g;
-    arr.sort((a,b)=>(a.underlying_symbol_name||a.display_name||a.underlying_symbol||a.symbol||'').localeCompare(b.underlying_symbol_name||b.display_name||b.underlying_symbol||b.symbol||'')).forEach(m=>{
-      const o=document.createElement('option');o.value=m.underlying_symbol||m.symbol;o.textContent=m.underlying_symbol_name||m.display_name||m.underlying_symbol||m.symbol;og.appendChild(o);
-    });$('market').appendChild(og);
+    arr.forEach(m=>{const o=document.createElement('option');o.value=m.symbol;o.textContent=m.name;og.appendChild(o)});
+    $('market').appendChild(og);
   });
-  const first=$('market').querySelector('option');if(first&&!selectedSymbol){selectedSymbol=first.value;$('market').value=selectedSymbol;loadHistory(selectedSymbol)}
+  if(!selectedSymbol){
+    const first=$('market').querySelector('option');
+    if(first){selectedSymbol=first.value;$('market').value=selectedSymbol;loadMarket(selectedSymbol)}
+  }else $('market').value=selectedSymbol;
 }
-function connect(){
-  if(ws)try{ws.close()}catch(e){}
-  buffers={};activeSubs={};selectedSymbol='';
-  ws=new WebSocket(WS);
-  ws.onopen=()=>{log('Connected to Deriv');ws.send(JSON.stringify({active_symbols:'brief',req_id:1}))}
-  ws.onmessage=e=>{
-    let m;try{m=JSON.parse(e.data)}catch(_){return}
-    if(m.error){log('Deriv error: '+m.error.message);$('reason').textContent='Deriv API error: '+m.error.message;return}
-    if(m.msg_type==='active_symbols'){log('Markets received: '+(m.active_symbols||[]).length);
-      markets=(m.active_symbols||[]).filter(x=>(x.underlying_symbol||x.symbol)&&classifyMarket(x)!=='Other');
-      renderMarkets();
-      markets.forEach(x=>subscribe(x.underlying_symbol||x.symbol));
-      return;
-    }
-    if(m.msg_type==='history'&&m.history){
-      const s=(m.echo_req&&m.echo_req.ticks_history)||pendingHistorySymbol;
-      pendingHistorySymbol=s;
-      const b=ensureBuffer(s);
-      b.length=0;
-      (m.history.prices||[]).forEach(q=>b.push(lastDigit(q,m.history.pip_size||m.pip_size)));
-      if(s===selectedSymbol){
-        const prices=m.history.prices||[];
-        if(prices.length){
-          const q=prices[prices.length-1];
-          showLastTick(q,b[b.length-1],s,m.history.pip_size||m.pip_size);
-        }
-        renderStream();update()
-      }
-      return;
-    }
-    if(m.msg_type==='tick'&&m.tick){
-      const s=m.tick.symbol||m.tick.underlying_symbol||(m.echo_req&&m.echo_req.ticks)||selectedSymbol;
-      const b=ensureBuffer(s),d=lastDigit(m.tick.quote,m.tick.pip_size||((markets.find(x=>(x.underlying_symbol||x.symbol)===s)||{}).pip_size));
-      b.push(d);if(b.length>MAX)b.shift();
-      if(s===selectedSymbol){showLastTick(m.tick.quote,d,s,m.tick.pip_size||((markets.find(x=>(x.underlying_symbol||x.symbol)===s)||{}).pip_size));log(d);renderStream();update()}
-    }
-  };
-  ws.onerror=()=>log('WebSocket error');
-  ws.onclose=()=>log('WebSocket closed');
-}
-function subscribe(s){
-  if(!ws||ws.readyState!==1||!s||activeSubs[s])return;
-  activeSubs[s]=true;ws.send(JSON.stringify({ticks:s,subscribe:1}));
-}
-async function loadBackgroundAnalysis(s){
+async function loadMarkets(){
   try{
-    const r=await fetch('/market-analysis?symbol='+encodeURIComponent(s),{cache:'no-store'});
-    const x=await r.json();
-    const a=x.contracts&&x.contracts[$('contract').value];
+    const r=await fetch('/markets',{cache:'no-store'}),x=await r.json();
+    markets=x.markets||[];renderMarkets();
+  }catch(e){
+    $('market').innerHTML='<option>Background collector unavailable</option>';
+  }
+}
+async function loadMarket(s){
+  selectedSymbol=s;
+  ensureBuffer(s);
+  $('signal').textContent='LOADING';
+  $('reason').textContent='Reading continuously collected history for '+s+'…';
+  await refreshHistory();
+  await refreshAnalysis();
+}
+async function refreshHistory(){
+  if(!selectedSymbol)return;
+  try{
+    const r=await fetch('/market-history?symbol='+encodeURIComponent(selectedSymbol)+'&count='+MAX,{cache:'no-store'});
+    const x=await r.json(),rows=x.ticks||[];
+    const b=ensureBuffer(selectedSymbol);b.length=0;rows.forEach(t=>b.push(Number(t.digit)));
+    if(rows.length)showLastTick(rows[rows.length-1],selectedSymbol);
+    renderStream();update();
+  }catch(e){}
+}
+async function refreshLiveTick(){
+  if(!selectedSymbol)return;
+  try{
+    const r=await fetch('/market-history?symbol='+encodeURIComponent(selectedSymbol)+'&count=1',{cache:'no-store'});
+    const x=await r.json(),row=(x.ticks||[])[0];
+    if(row)showLastTick(row,selectedSymbol);
+  }catch(e){}
+}
+async function refreshAnalysis(){
+  if(!selectedSymbol)return;
+  try{
+    const r=await fetch('/market-analysis?symbol='+encodeURIComponent(selectedSymbol),{cache:'no-store'});
+    const x=await r.json(),a=x.contracts&&x.contracts[$('contract').value];
     if(!a||!a.ready)return;
     $('samples').textContent=a.samples||0;
     $('selected').textContent=pct(a.selectedProbability||0);
@@ -181,156 +142,70 @@ async function loadBackgroundAnalysis(s){
     $('entry').textContent=a.entryDigit<0?'—':a.entryDigit+' · '+pct(a.entryProbability||0);
     $('entryReason').textContent=a.entryDigit<0?'Need more transition samples':'Server-side conditional follow-through';
     $('signal').textContent=a.signal||'WAIT';
-    $('reason').textContent=(a.gatesPassed||0)+'/6 server-side confirmation gates · continuously updated';
+    $('reason').textContent=(a.gatesPassed||0)+'/6 server-side confirmation gates · background collector running continuously';
     $('confidence').textContent='—';
   }catch(e){}
 }
-function loadHistory(s){
-  selectedSymbol=s;ensureBuffer(s).length=0;
-  $('signal').textContent='LOADING';
-  $('reason').textContent='Loading stored history and ongoing background analysis for '+s+'…';
-  pendingHistorySymbol=s;
-  fetch('/market-history?symbol='+encodeURIComponent(s)+'&count=500',{cache:'no-store'}).then(r=>r.json()).then(x=>{
-    const rows=x.ticks||[];
-    if(selectedSymbol!==s)return;
-    if(rows.length){const b=ensureBuffer(s);b.length=0;rows.forEach(t=>b.push(Number(t.digit)));renderStream();update();}
-    else if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks',subscribe:0}));
-    loadBackgroundAnalysis(s);
-  }).catch(()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks',subscribe:0}))});
-  renderStream();
-}
 function renderStream(){const b=ensureBuffer(selectedSymbol);$('ticks').textContent=b.slice(-120).reverse().join('  ')}
 function recentStats(b,c){
-  const n=b.length;if(!n)return {p:0,m:0,trend:0,transition:0};
-  const recent=b.slice(-60),mid=Math.max(1,Math.floor(recent.length/2));
-  const p=x=>x.filter(d=>qualifies(d,c)).length/x.length;
-  const pOld=p(recent.slice(0,mid)),pNew=p(recent.slice(mid));
-  const avg=recent.reduce((a,d)=>a+d,0)/recent.length;
-  const tr=side(c)==='OVER'?(avg-4.5)/4.5:(4.5-avg)/4.5;
-  const last=recent[recent.length-1];
-  const follows=[];for(let i=0;i<b.length-1;i++)if(b[i]===last)follows.push(qualifies(b[i+1],c));
-  const trans=follows.length?follows.filter(Boolean).length/follows.length:p(recent);
-  return {p:p(b),m:pNew-pOld,trend:tr,transition:trans,last};
+  const n=b.length;if(!n)return{p:0,m:0,trend:0,transition:0};
+  const recent=b.slice(-60),mid=Math.max(1,Math.floor(recent.length/2)),p=x=>x.length?x.filter(d=>qualifies(d,c)).length/x.length:0;
+  const pOld=p(recent.slice(0,mid)),pNew=p(recent.slice(mid)),avg=recent.reduce((a,d)=>a+d,0)/recent.length;
+  const tr=side(c)==='OVER'?(avg-4.5)/4.5:(4.5-avg)/4.5,last=recent[recent.length-1],f=[];
+  for(let i=0;i<b.length-1;i++)if(b[i]===last)f.push(qualifies(b[i+1],c));
+  return{p:p(b),m:pNew-pOld,trend:tr,transition:f.length?f.filter(Boolean).length/f.length:p(recent)};
 }
 function update(){
   const b=ensureBuffer(selectedSymbol),c=$('contract').value,cmp=pair(c);
   if(b.length<60){$('samples').textContent=b.length;return}
-
   const counts=Array(10).fill(0);b.forEach(d=>counts[d]++);
   $('samples').textContent=b.length;
   $('digits').innerHTML=counts.map((n,i)=>'<div class="digit"><b>'+i+'</b>'+pct(n/b.length)+'</div>').join('');
-
-  const st=recentStats(b,c),sc=recentStats(b,cmp);
-  $('selected').textContent=pct(st.p);
-  $('comparison').textContent=pct(sc.p);
-
-  const edge=st.p-sc.p;
-  $('edge').textContent=(edge>=0?'+':'')+pct(edge);
-
+  const st=recentStats(b,c),sc=recentStats(b,cmp),edge=st.p-sc.p;
+  $('selected').textContent=pct(st.p);$('comparison').textContent=pct(sc.p);$('edge').textContent=(edge>=0?'+':'')+pct(edge);
   $('momentum').textContent=st.m>.06?'POSITIVE':st.m<-.06?'NEGATIVE':'NEUTRAL';
   $('trend').textContent=st.trend>.08?'UPWARD':st.trend<-.08?'DOWNWARD':'BALANCED';
   $('transition').textContent=st.transition>.58?'FAVOURABLE':st.transition<.42?'UNFAVOURABLE':'MIXED';
-
   let runs=0,goodRuns=0,run=0;
-  for(const d of b.slice(-100)){
-    if(qualifies(d,c))run++;
-    else{if(run>=2){runs++;if(run>=3)goodRuns++}run=0}
-  }
+  for(const d of b.slice(-100)){if(qualifies(d,c))run++;else{if(run>=2){runs++;if(run>=3)goodRuns++}run=0}}
   if(run>=2){runs++;if(run>=3)goodRuns++}
   $('cluster').textContent=goodRuns?'ACTIVE':'BALANCED';
-
-  // Conditional entry-digit engine: measure what tends to happen AFTER each digit.
   let bestDigit=-1,bestScore=-1,bestN=0,bestRaw=.5;
   for(let d=0;d<10;d++){
     let n=0,good=0;
-    for(let i=0;i<b.length-1;i++){
-      if(b[i]===d){n++;if(qualifies(b[i+1],c))good++}
-    }
+    for(let i=0;i<b.length-1;i++)if(b[i]===d){n++;if(qualifies(b[i+1],c))good++}
     if(n>=8){
-      const raw=good/n;
-      const shrunk=(good+4*.5)/(n+4);
-      const sampleWeight=Math.min(1,n/30);
-      const score=.75*shrunk+.25*raw;
-      const weighted=.5+.5*(score-.5)*sampleWeight;
+      const raw=good/n,shrunk=(good+2)/(n+4),weight=Math.min(1,n/30),score=.75*shrunk+.25*raw,weighted=.5+.5*(score-.5)*weight;
       if(weighted>bestScore){bestScore=weighted;bestDigit=d;bestN=n;bestRaw=raw}
     }
   }
-  const entryProb=bestDigit<0?.5:(bestRaw);
+  const entryProb=bestDigit<0?.5:bestRaw;
   $('entry').textContent=bestDigit<0?'—':bestDigit+' · '+pct(entryProb);
   $('entryReason').textContent=bestDigit<0?'Need more transition samples':bestN+' observed follow-throughs from this digit';
-
-  // Six independent gates. A signal is issued only when the evidence agrees.
-  const probabilityGate=st.p>=.54 && edge>=.06;
-  const comparisonGate=sc.p<=st.p+.02;
-  const momentumGate=st.m>.03;
-  const trendGate=st.trend>.05;
-  const transitionGate=st.transition>=.56;
-  const entryGate=bestDigit>=0 && bestN>=8 && entryProb>=.60;
-
-  // For Under contracts, the directional signs above must be inverted.
-  const directionalMomentum=side(c)==='OVER'?st.m>0.03:st.m<-0.03;
-  const directionalTrend=side(c)==='OVER'?st.trend>0.05:st.trend<-0.05;
-  const directionalTransition=st.transition>=.56;
-
-  const gates=[
-    probabilityGate,
-    comparisonGate,
-    directionalMomentum,
-    directionalTrend,
-    directionalTransition,
-    entryGate
-  ];
-  const passed=gates.filter(Boolean).length;
-
-  // Separate score is used only to describe strength; it is NOT a claimed win probability.
-  const probScore=Math.max(0,Math.min(1,(edge-.02)/.13));
-  const momentumScore=Math.max(0,Math.min(1,Math.abs(st.m)/.20));
-  const trendScore=Math.max(0,Math.min(1,Math.abs(st.trend)/.30));
-  const transitionScore=Math.max(0,Math.min(1,(st.transition-.50)/.20));
-  const entryScore=bestDigit>=0?Math.max(0,Math.min(1,(entryProb-.50)/.25)):0;
-  const strength=(probScore+momentumScore+trendScore+transitionScore+entryScore)/5;
-  const confidence=Math.round(Math.max(0,Math.min(99,50+strength*45)));
-  $('confidence').textContent=confidence+'%';
-
-  let signal='WAIT',reason='Insufficient confluence';
-  if(sc.p>st.p+.04){
-    signal='BLOCKED';
-    reason='Comparison contract has the stronger observed probability';
-  }else if(passed>=5){
-    signal=side(c)+' '+threshold(c);
-    reason=passed+'/6 confirmation gates passed; strongest evidence agrees';
-  }else if(passed>=4){
-    signal='WATCH '+side(c)+' '+threshold(c);
-    reason=passed+'/6 gates passed; waiting for one more confirmation';
-  }else if(st.p<.50){
-    signal='WAIT';
-    reason='Selected side is below 50% in the current sample';
-  }else{
-    signal='WAIT';
-    reason=passed+'/6 gates passed; evidence is not strong enough';
-  }
-
-  $('signal').textContent=signal;
-  $('reason').textContent=reason;
+  const probabilityGate=st.p>=.54&&edge>=.06,comparisonGate=sc.p<=st.p+.02;
+  const directionalMomentum=side(c)==='OVER'?st.m>.03:st.m<-.03;
+  const directionalTrend=side(c)==='OVER'?st.trend>.05:st.trend<-.05;
+  const transitionGate=st.transition>=.56,entryGate=bestDigit>=0&&bestN>=8&&entryProb>=.60;
+  const passed=[probabilityGate,comparisonGate,directionalMomentum,directionalTrend,transitionGate,entryGate].filter(Boolean).length;
+  const probScore=Math.max(0,Math.min(1,(edge-.02)/.13)),momentumScore=Math.max(0,Math.min(1,Math.abs(st.m)/.20)),trendScore=Math.max(0,Math.min(1,Math.abs(st.trend)/.30)),transitionScore=Math.max(0,Math.min(1,(st.transition-.50)/.20)),entryScore=bestDigit>=0?Math.max(0,Math.min(1,(entryProb-.50)/.25)):0;
+  $('confidence').textContent=Math.round(Math.max(0,Math.min(99,50+((probScore+momentumScore+trendScore+transitionScore+entryScore)/5)*45)))+'%';
+  let signal='WAIT',reason=passed+'/6 gates passed; evidence is not strong enough';
+  if(sc.p>st.p+.04){signal='BLOCKED';reason='Comparison contract has the stronger observed probability'}
+  else if(passed>=5){signal=side(c)+' '+threshold(c);reason=passed+'/6 confirmation gates passed; strongest evidence agrees'}
+  else if(passed>=4){signal='WATCH '+side(c)+' '+threshold(c);reason=passed+'/6 gates passed; waiting for one more confirmation'}
+  else if(st.p<.50){reason='Selected side is below 50% in the current sample'}
+  $('signal').textContent=signal;$('reason').textContent=reason;
 }
-$('market').onchange=()=>loadHistory($('market').value);
-$('contract').onchange=update;
-$('reconnect').onclick=connect;
 async function refreshCollector(){
   try{
-    const r=await fetch('/collector-status',{cache:'no-store'});
-    const x=await r.json(),s=x.collector||{},d=x.database||{};
-    const online=!!s.connected&&!!d.ok;
-    $('collectorOnline').textContent=online?'ONLINE':'OFFLINE';
-    $('collectorOnline').className='online '+(online?'ok':'bad');
-    $('collectorMarkets').textContent=s.marketCount||0;
-    $('collectorStored').textContent=d.ticks||s.totalStored||0;
-    $('collectorAnalyzed').textContent=s.analyzedMarkets||0;
+    const r=await fetch('/collector-status',{cache:'no-store'}),x=await r.json(),s=x.collector||{},d=x.database||{},online=!!s.connected&&!!d.ok;
+    $('collectorOnline').textContent=online?'ONLINE':'OFFLINE';$('collectorOnline').className='online '+(online?'ok':'bad');
+    $('collectorMarkets').textContent=s.marketCount||0;$('collectorStored').textContent=d.ticks||s.totalStored||0;$('collectorAnalyzed').textContent=s.analyzedMarkets||0;
     $('collectorLast').textContent=s.lastTickAt?new Date(s.lastTickAt).toLocaleTimeString():(d.latest_received?new Date(d.latest_received).toLocaleTimeString():'—');
     $('collectorDb').textContent=d.ok?'PostgreSQL: ONLINE · '+(d.markets||0)+' markets in stored data · retention '+s.retentionDays+' days':('PostgreSQL: OFFLINE · '+(d.error||'unknown error'));
-  }catch(e){
-    $('collectorOnline').textContent='UNREACHABLE';$('collectorOnline').className='online bad';$('collectorDb').textContent='Collector status endpoint unavailable';
-  }
+  }catch(e){$('collectorOnline').textContent='UNREACHABLE';$('collectorOnline').className='online bad';$('collectorDb').textContent='Collector status endpoint unavailable'}
 }
-connect();refreshCollector();setInterval(refreshCollector,5000);setInterval(()=>{if(selectedSymbol)loadBackgroundAnalysis(selectedSymbol)},3000);
+$('market').onchange=()=>loadMarket($('market').value);
+$('contract').onchange=()=>{update();refreshAnalysis()};
+loadMarkets();refreshCollector();setInterval(refreshCollector,5000);setInterval(refreshLiveTick,1000);setInterval(refreshHistory,5000);setInterval(refreshAnalysis,3000);
 </script></body></html>
