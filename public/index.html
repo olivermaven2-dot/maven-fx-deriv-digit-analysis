@@ -56,7 +56,13 @@ function threshold(c){return Number(c.replace('over','').replace('under',''))}
 function qualifies(d,c){const n=threshold(c);return side(c)==='OVER'?d>n:d<n}
 function pair(c){return pairMap[c]}
 function ensureBuffer(s){if(!buffers[s])buffers[s]=[];return buffers[s]}
-function lastDigit(q){
+function lastDigit(q,pipSize){
+  const n=Number(q);
+  if(Number.isFinite(n)&&Number.isInteger(Number(pipSize))&&Number(pipSize)>=0){
+    const places=Number(pipSize);
+    const scaled=Math.round(Math.abs(n)*Math.pow(10,places));
+    return scaled%10;
+  }
   const s=String(q);
   const dot=s.indexOf('.');
   if(dot<0)return Number(s.slice(-1));
@@ -102,13 +108,13 @@ function connect(){
       pendingHistorySymbol=s;
       const b=ensureBuffer(s);
       b.length=0;
-      (m.history.prices||[]).forEach(q=>b.push(lastDigit(q)));
+      (m.history.prices||[]).forEach(q=>b.push(lastDigit(q,m.history.pip_size||m.pip_size)));
       if(s===selectedSymbol){renderStream();update()}
       return;
     }
     if(m.msg_type==='tick'&&m.tick){
       const s=m.tick.symbol||m.tick.underlying_symbol||(m.echo_req&&m.echo_req.ticks)||selectedSymbol;
-      const b=ensureBuffer(s),d=lastDigit(m.tick.quote);
+      const b=ensureBuffer(s),d=lastDigit(m.tick.quote,m.tick.pip_size||((markets.find(x=>(x.underlying_symbol||x.symbol)===s)||{}).pip_size));
       b.push(d);if(b.length>MAX)b.shift();
       if(s===selectedSymbol){log(d);renderStream();update()}
     }
