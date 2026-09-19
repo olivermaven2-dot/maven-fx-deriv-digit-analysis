@@ -47,7 +47,7 @@ select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414
 <script>
 const WS='wss://ws.derivws.com/websockets/v3?app_id=1089';
 const MAX=500;
-let ws=null,markets=[],selectedSymbol='',buffers={},activeSubs={};
+let ws=null,markets=[],selectedSymbol='',buffers={},activeSubs={},pendingHistorySymbol='';
 const $=id=>document.getElementById(id);
 const pairMap={over1:'under8',under8:'over1',over2:'under7',under7:'over2',over3:'under6',under6:'over3',over4:'under5',under5:'over4',over5:'under4',under4:'over5',over6:'under3',under3:'over6',over7:'under2',under2:'over7',over8:'under1',under1:'over8'};
 function pct(x){return (x*100).toFixed(1)+'%'}
@@ -65,7 +65,7 @@ function lastDigit(q){
 }
 function log(x){$('ticks').innerHTML=x+'<br>'+$('ticks').innerHTML;if($('ticks').innerHTML.length>14000)$('ticks').innerHTML=$('ticks').innerHTML.slice(0,14000)}
 function classifyMarket(m){
-  const n=(m.display_name||m.symbol||'').toLowerCase();
+  const n=(m.underlying_symbol_name||m.display_name||m.symbol||m.underlying_symbol||'').toLowerCase();
   if(n.includes('jump'))return 'Jump Indices';
   if(n.includes('volatility'))return n.includes('1s')||n.includes('1-second')?'Volatility 1s':'Volatility Indices';
   return 'Other';
@@ -87,19 +87,20 @@ function connect(){
   if(ws)try{ws.close()}catch(e){}
   buffers={};activeSubs={};selectedSymbol='';
   ws=new WebSocket(WS);
-  ws.onopen=()=>{log('Connected to Deriv');ws.send(JSON.stringify({active_symbols:'brief',product_type:'basic'}))}
+  ws.onopen=()=>{log('Connected to Deriv');ws.send(JSON.stringify({active_symbols:'brief',req_id:1}))}
   ws.onmessage=e=>{
     let m;try{m=JSON.parse(e.data)}catch(_){return}
     if(m.error){log('Deriv error: '+m.error.message);return}
     if(m.msg_type==='active_symbols'){
-      markets=m.active_symbols.filter(x=>x.is_trading===1&&classifyMarket(x)!=='Other');
+      markets=m.active_symbols.filter(x=>(x.is_trading===1||(x.is_trading_suspended!==1&&x.underlying_symbol))&&classifyMarket(x)!=='Other');
       renderMarkets();
       markets.forEach(x=>subscribe(x.symbol));
       return;
     }
     if(m.msg_type==='history'&&m.history&&m.echo_req&&m.echo_req.ticks_history){
-      const s=m.echo_req.ticks_history;
-      const b=ensureBuffer(s);
+      const s=(m.echo_req&&m.echo_req.ticks_history)||pendingHistorySymbol;
+      pendingHistorySymbol=s;
+  const b=ensureBuffer(s);
       b.length=0;
       (m.history.prices||[]).forEach(q=>b.push(lastDigit(q)));
       if(s===selectedSymbol){renderStream();update()}
@@ -107,6 +108,7 @@ function connect(){
     }
     if(m.msg_type==='tick'&&m.tick){
       const s=m.tick.symbol||m.echo_req&&m.echo_req.ticks||selectedSymbol;
+      const s=m.tick.symbol||m.tick.underlying_symbol||(m.echo_req&&m.echo_req.ticks)||selectedSymbol;
       const b=ensureBuffer(s),d=lastDigit(m.tick.quote);
       b.push(d);if(b.length>MAX)b.shift();
       if(s===selectedSymbol){log(d);renderStream();update()}
@@ -123,7 +125,8 @@ function loadHistory(s){
   selectedSymbol=s;ensureBuffer(s).length=0;
   $('signal').textContent='LOADING';
   $('reason').textContent='Loading recent ticks for '+s+'…';
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks'}));
+  pendingHistorySymbol=s;
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({ticks_history:s,adjust_start_time:1,count:500,end:'latest',start:1,style:'ticks',subscribe:0}));
   renderStream();update();
 }
 function renderStream(){const b=ensureBuffer(selectedSymbol);$('ticks').textContent=b.slice(-120).reverse().join('  ')}
