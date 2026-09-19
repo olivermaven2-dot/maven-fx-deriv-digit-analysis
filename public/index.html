@@ -12,11 +12,16 @@ select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414
 .signal{font-size:28px;font-weight:900}.status{margin-top:8px}.digits{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin-top:10px}
 .digit{padding:9px 3px;text-align:center;background:#09141c;border-radius:8px}.digit b{display:block;margin-bottom:3px}.ticks{height:190px;overflow:auto;font-family:monospace;font-size:13px;line-height:1.7;color:#a9c1cc}
 .meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.meta div{background:#09141c;padding:9px;border-radius:9px}
-@media(max-width:700px){.controls,.grid{grid-template-columns:1fr}.wide{grid-column:auto}.digits{grid-template-columns:repeat(5,1fr)}.meta{grid-template-columns:1fr 1fr}}
+.live-tape{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.live-tape .value{font-size:30px}.live-tape .digit-live{font-size:42px}
+@media(max-width:700px){.controls,.grid{grid-template-columns:1fr}.wide{grid-column:auto}.digits{grid-template-columns:repeat(5,1fr)}.meta{grid-template-columns:1fr 1fr}.live-tape{grid-template-columns:1fr}}
 </style></head>
 <body>
 <header><h1>Maven FX · Deriv Digit Analysis</h1><div class="muted">Live digit analysis only — no trading/account connection</div></header>
 <main>
+<section class="card live-tape">
+<div><div class="label">Last tick from Deriv</div><div id="lastTick" class="value">—</div><div id="lastTickMarket" class="muted">Waiting for live tick…</div></div>
+<div><div class="label">Last digit</div><div id="lastDigit" class="value digit-live">—</div><div class="muted">Extracted from the latest Deriv tick</div></div>
+</section>
 <section class="controls">
 <select id="market"><option value="">Loading Volatility & Jump markets…</option></select>
 <select id="contract">
@@ -70,6 +75,22 @@ function lastDigit(q,pipSize){
   return Number(frac.length?frac.slice(-1):'0');
 }
 function log(x){$('ticks').innerHTML=x+'<br>'+$('ticks').innerHTML;if($('ticks').innerHTML.length>14000)$('ticks').innerHTML=$('ticks').innerHTML.slice(0,14000)}
+function formatQuote(q,pipSize){
+  const n=Number(q);
+  if(!Number.isFinite(n))return String(q);
+  const p=Number(pipSize);
+  if(Number.isInteger(p)&&p>=0&&p<=10)return n.toFixed(p);
+  if(Number.isFinite(p)&&p>0&&p<1){
+    const places=Math.max(0,Math.min(10,(String(p).split('.')[1]||'').replace(/0+$/,'').length));
+    return n.toFixed(places);
+  }
+  return String(q);
+}
+function showLastTick(quote,digit,symbol,pipSize){
+  $('lastTick').textContent=formatQuote(quote,pipSize);
+  $('lastDigit').textContent=String(digit);
+  $('lastTickMarket').textContent=(symbol||selectedSymbol||'').toUpperCase();
+}
 function classifyMarket(m){
   const n=(m.underlying_symbol_name||m.display_name||m.symbol||m.underlying_symbol||'').toLowerCase();
   if(n.includes('jump'))return 'Jump Indices';
@@ -109,14 +130,21 @@ function connect(){
       const b=ensureBuffer(s);
       b.length=0;
       (m.history.prices||[]).forEach(q=>b.push(lastDigit(q,m.history.pip_size||m.pip_size)));
-      if(s===selectedSymbol){renderStream();update()}
+      if(s===selectedSymbol){
+        const prices=m.history.prices||[];
+        if(prices.length){
+          const q=prices[prices.length-1];
+          showLastTick(q,b[b.length-1],s,m.history.pip_size||m.pip_size);
+        }
+        renderStream();update()
+      }
       return;
     }
     if(m.msg_type==='tick'&&m.tick){
       const s=m.tick.symbol||m.tick.underlying_symbol||(m.echo_req&&m.echo_req.ticks)||selectedSymbol;
       const b=ensureBuffer(s),d=lastDigit(m.tick.quote,m.tick.pip_size||((markets.find(x=>(x.underlying_symbol||x.symbol)===s)||{}).pip_size));
       b.push(d);if(b.length>MAX)b.shift();
-      if(s===selectedSymbol){log(d);renderStream();update()}
+      if(s===selectedSymbol){showLastTick(m.tick.quote,d,s,m.tick.pip_size||((markets.find(x=>(x.underlying_symbol||x.symbol)===s)||{}).pip_size));log(d);renderStream();update()}
     }
   };
   ws.onerror=()=>log('WebSocket error');
