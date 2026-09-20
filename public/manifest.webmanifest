@@ -1,0 +1,20 @@
+{
+  "name": "Maven FX — Deriv Digit Analysis",
+  "short_name": "Maven FX",
+  "description": "Live Deriv synthetic digit analysis with a 24/7 background collector.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#071018",
+  "theme_color": "#071018",
+  "categories": ["finance", "utilities"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
