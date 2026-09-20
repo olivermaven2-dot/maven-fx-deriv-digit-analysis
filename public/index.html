@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#071018"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg" type="image/svg+xml">
 <title>Maven FX — Deriv Digit Analysis</title>
 <style>
 *{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;background:#071018;color:#eaf2f7}
@@ -214,4 +214,4 @@ async function refreshCollector(){
 $('market').onchange=()=>loadMarket($('market').value);
 $('contract').onchange=()=>{update();refreshAnalysis()};
 loadMarkets();refreshCollector();setInterval(refreshCollector,5000);setInterval(refreshLiveTick,1000);setInterval(refreshHistory,5000);setInterval(refreshAnalysis,3000);
-</script></body></html>
+if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));}\n</script></body></html>
