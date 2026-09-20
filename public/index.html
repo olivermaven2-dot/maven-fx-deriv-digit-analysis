@@ -49,6 +49,8 @@ select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414
 </section>
 <section class="grid">
 <div class="card wide"><div class="label">Final signal</div><div id="signal" class="signal">WAITING FOR DATA</div><div id="reason" class="muted">Building the selected market history…</div>
+<div class="meta"><div><span class="label">A-Setup</span><br><b id="aSetup">—</b></div><div><span class="label">A-Setup quality</span><br><b id="aQuality">—</b></div><div><span class="label">A-Setup checks</span><br><b id="aChecks">—</b></div></div>
+<div id="aReason" class="muted" style="margin-top:8px">Strict confirmation layer waiting for data…</div>
 <div class="meta"><div><span class="label">Confidence</span><br><b id="confidence">—</b></div><div><span class="label">Probability edge</span><br><b id="edge">—</b></div><div><span class="label">Samples</span><br><b id="samples">0</b></div></div></div>
 <div class="card"><div class="label">Selected probability</div><div id="selected" class="value">—</div></div>
 <div class="card"><div class="label">Comparison probability</div><div id="comparison" class="value">—</div></div>
@@ -64,7 +66,7 @@ select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #29414
 const MAX=500;
 let markets=[],selectedSymbol='',buffers={};
 const $=id=>document.getElementById(id);
-const pairMap={over1:'under8',under8:'over1',over2:'under7',under7:'over2',over3:'under6',under6:'over4',over4:'under5',under5:'over4',over5:'under4',under4:'over5',over6:'under3',under3:'over6',over7:'under2',under2:'over7',over8:'under1',under1:'over8'};
+const pairMap={over1:'under8',under8:'over1',over2:'under7',under7:'over2',over3:'under6',under6:'over3',over4:'under5',under5:'over4',over5:'under4',under4:'over5',over6:'under3',under3:'over6',over7:'under2',under2:'over7',over8:'under1',under1:'over8'};
 function pct(x){return (x*100).toFixed(1)+'%'}
 function side(c){return c.startsWith('over')?'OVER':'UNDER'}
 function threshold(c){return Number(c.replace('over','').replace('under',''))}
@@ -141,8 +143,12 @@ async function refreshAnalysis(){
     $('transition').textContent=a.transition>.58?'FAVOURABLE':a.transition<.42?'UNFAVOURABLE':'MIXED';
     $('entry').textContent=a.entryDigit<0?'—':a.entryDigit+' · '+pct(a.entryProbability||0);
     $('entryReason').textContent=a.entryDigit<0?'Need more transition samples':'Server-side conditional follow-through';
+    $('aSetup').textContent=a.aSetup?'PASS':'NOT READY';
+    $('aQuality').textContent=(a.aSetupQuality||0)+'%';
+    $('aChecks').textContent=(a.aSetupGatesPassed||0)+'/6';
+    $('aReason').textContent=a.aSetupReason||'Strict A-setup confirmation layer';
     $('signal').textContent=a.signal||'WAIT';
-    $('reason').textContent=(a.gatesPassed||0)+'/6 server-side confirmation gates · background collector running continuously';
+    $('reason').textContent=(a.gatesPassed||0)+'/6 base gates · A-setup must pass before a normal contract signal';
     $('confidence').textContent='—';
   }catch(e){}
 }
