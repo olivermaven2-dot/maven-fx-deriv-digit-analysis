@@ -42,11 +42,32 @@ function calcContract(b,c){
   const directionalTransition=transition>=.56;
   const entryGate=bestDigit>=0&&bestN>=8&&entryProb>=.60;
   const passed=[probabilityGate,comparisonGate,directionalMomentum,directionalTrend,directionalTransition,entryGate].filter(Boolean).length;
+
+  // A-setup: stricter quality layer requiring every directional confirmation to agree.
+  const aProbabilityGate=selected>=.56&&edge>=.08;
+  const aComparisonGate=cb.p<=selected+.01;
+  const aMomentumGate=side(c)==='OVER'?pNew-pOld>.04:pNew-pOld<-.04;
+  const aTrendGate=side(c)==='OVER'?trend>.06:trend<-.06;
+  const aTransitionGate=transition>=.60;
+  const aEntryGate=bestDigit>=0&&bestN>=10&&entryProb>=.62;
+  const aGates=[aProbabilityGate,aComparisonGate,aMomentumGate,aTrendGate,aTransitionGate,aEntryGate];
+  const aPassed=aGates.filter(Boolean).length;
+  const aSetup=aPassed===6;
+  const aSetupQuality=Math.round((aPassed/6)*100);
+  const failed=[];
+  if(!aProbabilityGate)failed.push('probability/edge');
+  if(!aComparisonGate)failed.push('comparison');
+  if(!aMomentumGate)failed.push('momentum');
+  if(!aTrendGate)failed.push('trend');
+  if(!aTransitionGate)failed.push('transition');
+  if(!aEntryGate)failed.push('entry');
+  const aSetupReason=aSetup?'All A-setup confirmations agree':'Waiting for: '+failed.join(', ');
+
   let signal='WAIT';
   if(cb.p>selected+.04)signal='BLOCKED';
-  else if(passed>=5)signal=side(c)+' '+threshold(c);
+  else if(aSetup)signal=side(c)+' '+threshold(c);
   else if(passed>=4)signal='WATCH '+side(c)+' '+threshold(c);
-  return {ready:true,samples:b.length,selectedProbability:selected,comparisonProbability:cb.p,edge,momentum:pNew-pOld,trend,transition,entryDigit:bestDigit,entryProbability:entryProb,gatesPassed:passed,signal,updatedAt:new Date().toISOString()};
+  return {ready:true,samples:b.length,selectedProbability:selected,comparisonProbability:cb.p,edge,momentum:pNew-pOld,trend,transition,entryDigit:bestDigit,entryProbability:entryProb,gatesPassed:passed,aSetup,aSetupQuality,aSetupGatesPassed:aPassed,aSetupReason,signal,updatedAt:new Date().toISOString()};
 }
 function calcBasic(b,c){
   if(!b.length)return {p:0};
